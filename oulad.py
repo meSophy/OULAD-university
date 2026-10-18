@@ -306,10 +306,24 @@ def mcnemar_exact(y, pred_a, pred_b):
     return b, c, float(p)
 
 
+def holm_adjust(pvals):  # ЗМІНЕНО: нова функція (поправка Холма)
+    """Скориговані p-значення за методом Холма (Holm, 1979); порядок збігається з вхідним."""  # ЗМІНЕНО
+    p = np.asarray(pvals, dtype=float)  # ЗМІНЕНО
+    m = len(p)  # ЗМІНЕНО
+    order = np.argsort(p)  # ЗМІНЕНО
+    adj = np.empty(m)  # ЗМІНЕНО
+    running = 0.0  # ЗМІНЕНО
+    for rank, idx in enumerate(order):  # ЗМІНЕНО
+        running = max(running, (m - rank) * p[idx])  # ЗМІНЕНО
+        adj[idx] = min(1.0, running)  # ЗМІНЕНО
+    return adj  # ЗМІНЕНО
+
+
 def risk_threshold_table(y, proba1, recalls=(0.80, 0.85, 0.90, 0.95)):
     """Поріг для виявлення ризику: ризик = (1 - P(успіх)) >= t."""
     y_risk = (np.asarray(y) == 0)
     s = 1 - np.asarray(proba1)
+    base_rate = float(y_risk.mean())  # ЗМІНЕНО: частка групи ризику в тестовій вибірці
     prec, rec, thr = precision_recall_curve(y_risk, s)
     rows = []
     for target in recalls:
@@ -321,6 +335,9 @@ def risk_threshold_table(y, proba1, recalls=(0.80, 0.85, 0.90, 0.95)):
         rows.append({"target_recall_risk": target, "risk_score_threshold": float(thr[i]),
                      "precision_risk": float(prec[i]), "recall_risk": float(rec[i]),
                      "flagged": int(flagged.sum()),
+                     "flagged_share": float(flagged.mean()),  # ЗМІНЕНО: частка позначених студентів
+                     "base_rate_risk": base_rate,  # ЗМІНЕНО
+                     "lift": float(prec[i]) / base_rate,  # ЗМІНЕНО: precision / частка групи ризику
                      "missed_risk": int((y_risk & ~flagged).sum()),
                      "false_alarms": int((~y_risk & flagged).sum())})
     return pd.DataFrame(rows), (prec, rec)
@@ -397,7 +414,11 @@ def run_experiment(df, features, label, extras=True, cv_repeats=CV_REPEATS):
                     "nb_t": t_val, "nb_p": p_val,
                     "mcnemar_best_only_correct": b, "mcnemar_other_only_correct": c,
                     "mcnemar_p": p_mc})
-    res["sig"] = pd.DataFrame(sig)
+    sig_df = pd.DataFrame(sig)  # ЗМІНЕНО
+    if len(sig_df):  # ЗМІНЕНО: поправка Холма в межах вікна (3 порівняння найкращої моделі з іншими)
+        sig_df["nb_p_holm"] = holm_adjust(sig_df["nb_p"].values)  # ЗМІНЕНО
+        sig_df["mcnemar_p_holm"] = holm_adjust(sig_df["mcnemar_p"].values)  # ЗМІНЕНО
+    res["sig"] = sig_df  # ЗМІНЕНО
 
     #крива порогу для групи ризику кращої моделі
     thr_tbl, curve = risk_threshold_table(yte, probas[best])
